@@ -4,7 +4,11 @@
 TagManager:
   serializedVersion: 3
   tags:
-  - Anchor
+  - FrontWall
+  - TruckBed
+  - AntiSlipMat
+  - Cargo
+  - StrapHook
   layers:
   - Default
   - TransparentFX
@@ -14,10 +18,10 @@ TagManager:
   - UI
   - 
   - 
-  - 
-  - 
-  - 
-  - 
+  - Cargo
+  - Mat
+  - Truck
+  - StrapLayer
   - 
   - 
   - 
