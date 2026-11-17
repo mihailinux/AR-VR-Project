@@ -292,8 +292,13 @@ MonoBehaviour:
   matCoverageNeeded: 0.33
   settleDelay: 0.6
   respawnBelowBedM: 0.5
+  stillNeededS: 0.15
+  previewMaterial: {fileID: 2100000, guid: 97d3001b879e0cc4ba5a4e9d326201a5, type: 2}
+  flushMagnetM: 0.01
+  dropSearchM: 2
   rend: {fileID: 777055863404011030}
   isHeld: 0
+  isHovered: 0
   onBed: 0
   onMat: 0
   matCoverage: 0
@@ -310,3 +315,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9b0da687fe73de14198e6cbd7a440ad0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CargoTwin
+  liveFollow: 0
+  hideWhileHeld: 0

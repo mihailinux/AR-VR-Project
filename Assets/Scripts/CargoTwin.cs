@@ -3,12 +3,14 @@ using UnityEngine;
 [RequireComponent(typeof(CargoItem))]
 public class CargoTwin : MonoBehaviour
 {
-    public bool liveFollow = false;      // tick: twin follows the box all the time
+    public bool liveFollow = false;      // tick: twin follows the box all the time, even while held
     public bool hideWhileHeld = false;   // tick: hide the twin while you carry the box
 
     CargoItem item;
     Transform twin;
     Renderer twinRend, miniRend;
+    bool following;
+    bool wasHeld;
 
     void Start()
     {
@@ -22,45 +24,57 @@ public class CargoTwin : MonoBehaviour
 
         var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
         go.name = name + "_Twin";
-        go.SetActive(false);                           // hidden until the first placement
-        Destroy(go.GetComponent<Collider>());          // twin is visual only
+        go.SetActive(false);
+        Destroy(go.GetComponent<Collider>());
         twin = go.transform;
         twin.SetParent(TruckFrame.Instance.twinParent, false);
-        twin.localScale = item.realSizeM;              // real size in meters
+        twin.localScale = item.realSizeM;
 
         twinRend = go.GetComponent<Renderer>();
         miniRend = item.rend;
         if (miniRend != null) twinRend.material = new Material(miniRend.sharedMaterial);
 
-        item.Settled += Sync;                          // update when the box has stopped
+        item.Settled += OnSettled;
     }
 
     void Update()
     {
         if (twin == null) return;
 
-        if (hideWhileHeld && item.isHeld)
-            twin.gameObject.SetActive(false);
+        if (wasHeld && !item.isHeld)
+        {
+            following = true;
+            Sync();
+        }
+        if (item.isHeld) following = false;
+        wasHeld = item.isHeld;
 
-        // color follows every frame so it never shows an old state
+        // CHANGED: visible only if the box was last placed on the bed
+        bool show = item.placedOnBed && !(hideWhileHeld && item.isHeld);
+        if (twin.gameObject.activeSelf != show) twin.gameObject.SetActive(show);
+
         if (miniRend != null && twinRend.material.color != miniRend.material.color)
             twinRend.material.color = miniRend.material.color;
     }
 
     void LateUpdate()
     {
-        if (liveFollow) Sync();
+        if (liveFollow || following) Sync();
+    }
+
+    void OnSettled()
+    {
+        Sync();
+        following = false;
     }
 
     void Sync()
     {
         if (twin == null) return;
-        twin.gameObject.SetActive(true);
 
         Transform bed = BedFrame.Mini.transform;
         Transform truck = TruckFrame.Instance.transform;
 
-        // position relative to the mini bed, scaled up to real size
         Vector3 local = bed.InverseTransformPoint(transform.position) / item.miniScale;
         twin.position = truck.TransformPoint(local);
         twin.rotation = truck.rotation * (Quaternion.Inverse(bed.rotation) * transform.rotation);
@@ -68,7 +82,7 @@ public class CargoTwin : MonoBehaviour
 
     void OnDestroy()
     {
-        if (item != null) item.Settled -= Sync;
+        if (item != null) item.Settled -= OnSettled;
         if (twin != null) Destroy(twin.gameObject);
     }
 }

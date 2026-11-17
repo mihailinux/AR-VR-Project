@@ -9,6 +9,7 @@ TagManager:
   - AntiSlipMat
   - Cargo
   - StrapHook
+  - SupplyTable
   layers:
   - Default
   - TransparentFX
