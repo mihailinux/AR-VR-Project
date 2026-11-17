@@ -6,6 +6,7 @@ using UnityEngine.XR.Interaction.Toolkit.Interactables;
 public class ResetButton : MonoBehaviour
 {
     public BoxSpawner spawner;
+    public StrapSpawner strapSpawner;
     XRSimpleInteractable inter;
 
     void Awake() { inter = GetComponent<XRSimpleInteractable>(); }
@@ -14,6 +15,7 @@ public class ResetButton : MonoBehaviour
 
     void OnPressed(SelectEnterEventArgs args)
     {
-        if (spawner != null) spawner.SpawnAll();   // clears everything and puts new boxes on the table
+        if (spawner != null) spawner.SpawnAll();
+        if (strapSpawner != null) strapSpawner.ResetAllStraps();
     }
 }
