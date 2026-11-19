@@ -3,13 +3,7 @@
 --- !u!78 &1
 TagManager:
   serializedVersion: 3
-  tags:
-  - FrontWall
-  - TruckBed
-  - AntiSlipMat
-  - Cargo
-  - StrapHook
-  - SupplyTable
+  tags: []
   layers:
   - Default
   - TransparentFX
@@ -17,12 +11,12 @@ TagManager:
   - 
   - Water
   - UI
+  - navMeshObjects
+  - decal
+  - Outline
+  - AssemblyAnimation
   - 
   - 
-  - Cargo
-  - Mat
-  - Truck
-  - StrapLayer
   - 
   - 
   - 
@@ -56,4 +50,3 @@ TagManager:
   - Light Layer 5
   - Light Layer 6
   - Light Layer 7
-  m_MigratedRenderPipelines: []
