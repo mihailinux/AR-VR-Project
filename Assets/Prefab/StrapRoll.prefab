@@ -139,8 +139,8 @@ Rigidbody:
     m_Bits: 0
   m_ImplicitCom: 1
   m_ImplicitTensor: 1
-  m_UseGravity: 1
-  m_IsKinematic: 0
+  m_UseGravity: 0
+  m_IsKinematic: 1
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 0
@@ -286,14 +286,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 64f2582fa73e00c4f98ea47c61855115, type: 3}
   m_Name: 
   m_EditorClassIdentifier: '::'
+  spawner: {fileID: 0}
   strapMaterial: {fileID: 2100000, guid: 294c29c5781eb974b90adde6f3ed655e, type: 2}
   previewMaterial: {fileID: 2100000, guid: 97d3001b879e0cc4ba5a4e9d326201a5, type: 2}
   miniBeltWidth: 0.02
   hoverOffset: 0.004
+  sideClearance: 0.012
   raySamples: 32
+  wristRollThreshold: 35
   maxPretensionN: 5000
   forcePerStrokeN: 1000
   currentPretensionN: 0
   isPlacedOnBed: 0
-  bedLocalZ: 0
+  isDiagonalMode: 0
   securedCargo: []

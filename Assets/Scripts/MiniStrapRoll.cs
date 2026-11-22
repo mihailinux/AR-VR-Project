@@ -15,10 +15,13 @@ public class MiniStrapRoll : MonoBehaviour
     public Material previewMaterial;
 
     [Header("Strap Dimensions (Mini Scale)")]
-    public float miniBeltWidth = 0.035f;   // Thicker belt (3.5cm mini -> ~10.5cm full truck)
-    public float hoverOffset = 0.02f;      // > half belt width so it never clips into box tops
-    public float sideClearance = 0.015f;   // Pushes outer corners out so diagonal segments clear box sides
+    public float miniBeltWidth = 0.035f;
+    public float hoverOffset = 0.02f;
+    public float sideClearance = 0.012f;
     public int raySamples = 40;
+
+    [Header("Forearm Z-Spin Settings")]
+    public float wristRollThreshold = 28f; // Forearm spin angle (degrees) to snap into diagonal mode
 
     [Header("Ratchet & Tension Specs")]
     public float maxPretensionN = 5000f;   // 500 daN
@@ -27,14 +30,20 @@ public class MiniStrapRoll : MonoBehaviour
 
     [Header("Live Status (Read by Validator)")]
     public bool isPlacedOnBed = false;
-    public float bedLocalZ = 0f;
+    public bool isDiagonalMode = false;
     public List<CargoItem> securedCargo = new List<CargoItem>();
+
+    public static readonly List<MiniStrapRoll> allStraps = new List<MiniStrapRoll>();
 
     private Rigidbody rb;
     private XRGrabInteractable grab;
     private MeshRenderer rollRenderer;
     private Collider rollCollider;
     private bool notifiedSpawner = false;
+    private IXRSelectInteractor holdingHand;
+
+    private Vector3 localStartAnchor;
+    private Vector3 localEndAnchor;
 
     private LineRenderer ghostLine;
     private GameObject placedRoot;
@@ -60,12 +69,14 @@ public class MiniStrapRoll : MonoBehaviour
 
     void OnEnable()
     {
+        allStraps.Add(this);
         grab.selectEntered.AddListener(OnRollGrabbed);
         grab.selectExited.AddListener(OnRollReleased);
     }
 
     void OnDisable()
     {
+        allStraps.Remove(this);
         grab.selectEntered.RemoveListener(OnRollGrabbed);
         grab.selectExited.RemoveListener(OnRollReleased);
     }
@@ -77,7 +88,7 @@ public class MiniStrapRoll : MonoBehaviour
         if (twinRoot != null) Destroy(twinRoot);
     }
 
-    // ---------- 1. GRAB, RESPAWN & GHOST PREVIEW ----------
+    // ---------- 1. GRAB, RESPAWN & FOREARM Z-SPIN DIAGONAL ----------
 
     private void CreateGhostLine()
     {
@@ -97,6 +108,8 @@ public class MiniStrapRoll : MonoBehaviour
 
     private void OnRollGrabbed(SelectEnterEventArgs args)
     {
+        holdingHand = args.interactorObject;
+
         if (!notifiedSpawner && spawner != null)
         {
             notifiedSpawner = true;
@@ -108,19 +121,74 @@ public class MiniStrapRoll : MonoBehaviour
     {
         if (ghostLine != null) ghostLine.gameObject.SetActive(false);
 
-        if (IsOverMiniBed(out float localZ))
+        if (EvaluatePlacement(out Vector3 lStart, out Vector3 lEnd, out bool diag))
         {
-            PlaceStrapAt(localZ);
+            holdingHand = null;
+            PlaceStrapAt(lStart, lEnd, diag);
         }
         else
         {
+            holdingHand = null;
             Destroy(gameObject);
         }
     }
 
-    private bool IsOverMiniBed(out float localZ)
+    // Measures forearm pronation/supination (spinning around controller Z-axis like a fan)
+    // Returns -1 (left spin), 0 (upright/straight), or +1 (right spin) — no in-betweens
+    private int GetWristRollSign()
     {
-        localZ = 0f;
+        Transform wrist = holdingHand != null ? holdingHand.transform : transform;
+        Vector3 fwd = wrist.forward.normalized;
+
+        Vector3 refUp = Vector3.ProjectOnPlane(Vector3.up, fwd);
+        if (refUp.sqrMagnitude < 0.01f)
+            refUp = Vector3.ProjectOnPlane(Vector3.forward, fwd);
+        refUp.Normalize();
+
+        float rollDeg = Vector3.SignedAngle(refUp, wrist.up, fwd);
+
+        if (Mathf.Abs(rollDeg) < wristRollThreshold)
+            return 0;
+
+        return rollDeg > 0f ? 1 : -1;
+    }
+
+    // Finds the box in the hand's Z-row across the width of MiniBed
+    private CargoItem FindTargetBox(Vector3 bedLocalPos)
+    {
+        Transform bed = BedFrame.Mini.transform;
+        CargoItem bestBox = null;
+        float bestScore = float.MaxValue;
+
+        foreach (var item in CargoItem.all)
+        {
+            if (item == null || !item.placedOnBed || item.isHeld) continue;
+
+            Vector3 ol = bed.InverseTransformPoint(item.transform.position);
+            Vector3 oh = item.transform.lossyScale * 0.5f;
+            bool aligned = Mathf.Abs(Vector3.Dot(item.transform.right, bed.right)) > 0.7f;
+            float extZ = aligned ? oh.z : oh.x;
+
+            float zDist = Mathf.Abs(bedLocalPos.z - ol.z);
+            if (zDist <= extZ + 0.08f)
+            {
+                float score = Mathf.Abs(bedLocalPos.x - ol.x) + ol.y * 0.5f;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestBox = item;
+                }
+            }
+        }
+        return bestBox;
+    }
+
+    private bool EvaluatePlacement(out Vector3 lStart, out Vector3 lEnd, out bool diag)
+    {
+        lStart = Vector3.zero;
+        lEnd = Vector3.zero;
+        diag = false;
+
         if (BedFrame.Mini == null) return false;
 
         Transform bed = BedFrame.Mini.transform;
@@ -128,20 +196,44 @@ public class MiniStrapRoll : MonoBehaviour
         float halfW = BedFrame.Mini.HalfWidth;
         float halfL = BedFrame.Mini.HalfLength;
 
-        if (Mathf.Abs(local.x) <= halfW + 0.1f && Mathf.Abs(local.z) <= halfL && local.y > -0.05f)
+        if (Mathf.Abs(local.x) > halfW + 0.1f || Mathf.Abs(local.z) > halfL || local.y <= -0.05f)
+            return false;
+
+        int rollSign = GetWristRollSign();
+        CargoItem targetBox = FindTargetBox(local);
+
+        // Diagonal mode: spans the full width of the bed (-halfW to +halfW),
+        // but locks stationary to the target box's Z-boundaries [ol.z - extZ, ol.z + extZ]
+        // so it never goes too far left/right into neighboring boxes.
+        if (rollSign != 0 && targetBox != null)
         {
-            localZ = Mathf.Clamp(local.z, -halfL + 0.03f, halfL - 0.03f);
+            diag = true;
+            Vector3 ol = bed.InverseTransformPoint(targetBox.transform.position);
+            Vector3 oh = targetBox.transform.lossyScale * 0.5f;
+            bool aligned = Mathf.Abs(Vector3.Dot(targetBox.transform.right, bed.right)) > 0.7f;
+            float extZ = aligned ? oh.z : oh.x;
+
+            float zStart = Mathf.Clamp(ol.z - rollSign * extZ, -halfL + 0.01f, halfL - 0.01f);
+            float zEnd   = Mathf.Clamp(ol.z + rollSign * extZ, -halfL + 0.01f, halfL - 0.01f);
+
+            lStart = new Vector3(-halfW, 0.005f, zStart);
+            lEnd   = new Vector3( halfW, 0.005f, zEnd);
             return true;
         }
-        return false;
+
+        // Straight mode: across full width of MiniBed at hand's Z position
+        float clampedZ = Mathf.Clamp(local.z, -halfL + 0.03f, halfL - 0.03f);
+        lStart = new Vector3(-halfW, 0.005f, clampedZ);
+        lEnd   = new Vector3( halfW, 0.005f, clampedZ);
+        return true;
     }
 
     void LateUpdate()
     {
-        if (!isPlacedOnBed && grab.isSelected && IsOverMiniBed(out float localZ))
+        if (!isPlacedOnBed && grab.isSelected && EvaluatePlacement(out Vector3 lStart, out Vector3 lEnd, out _))
         {
             ghostLine.gameObject.SetActive(true);
-            List<Vector3> pts = ComputeContourPoints(BedFrame.Mini.transform, BedFrame.Mini.HalfWidth, localZ, 1f, false);
+            List<Vector3> pts = ComputeContourPoints(BedFrame.Mini.transform, lStart, lEnd, 1f, false);
             ApplyPointsToLine(ghostLine, pts, 0f);
         }
         else if (ghostLine != null && ghostLine.gameObject.activeSelf)
@@ -159,10 +251,12 @@ public class MiniStrapRoll : MonoBehaviour
 
     // ---------- 2. PLACE STRAP, CRANK, REMOVE TAB & FULL TWIN ----------
 
-    private void PlaceStrapAt(float localZ)
+    private void PlaceStrapAt(Vector3 lStart, Vector3 lEnd, bool diag)
     {
         isPlacedOnBed = true;
-        bedLocalZ = localZ;
+        isDiagonalMode = diag;
+        localStartAnchor = lStart;
+        localEndAnchor = lEnd;
         currentPretensionN = 0f;
 
         grab.enabled = false;
@@ -171,11 +265,10 @@ public class MiniStrapRoll : MonoBehaviour
         rb.isKinematic = true;
 
         Transform bed = BedFrame.Mini.transform;
-        float halfW = BedFrame.Mini.HalfWidth;
 
         placedRoot = new GameObject(name + "_Placed");
         placedRoot.transform.SetParent(bed, false);
-        placedRoot.transform.localPosition = new Vector3(0f, 0f, localZ);
+        placedRoot.transform.localPosition = localEndAnchor;
 
         miniLine = placedRoot.AddComponent<LineRenderer>();
         miniLine.useWorldSpace = true;
@@ -184,15 +277,15 @@ public class MiniStrapRoll : MonoBehaviour
         miniLine.startWidth = miniLine.endWidth = miniBeltWidth;
         if (strapMaterial != null) miniLine.material = new Material(strapMaterial);
 
-        BuildVisualCrank(placedRoot.transform, halfW);
-        BuildRemoveButton(placedRoot.transform, halfW);
+        BuildVisualCrank(placedRoot.transform);
+        BuildRemoveButton(placedRoot.transform);
 
         if (TruckFrame.Instance != null)
         {
-            float scaleRatio = TruckFrame.Instance.HalfWidth / halfW;
+            float scaleRatio = TruckFrame.Instance.HalfWidth / BedFrame.Mini.HalfWidth;
             twinRoot = new GameObject(name + "_Twin");
             twinRoot.transform.SetParent(TruckFrame.Instance.twinParent, false);
-            twinRoot.transform.localPosition = new Vector3(0f, 0f, localZ * scaleRatio);
+            twinRoot.transform.localPosition = localEndAnchor * scaleRatio;
 
             twinLine = twinRoot.AddComponent<LineRenderer>();
             twinLine.useWorldSpace = true;
@@ -205,12 +298,12 @@ public class MiniStrapRoll : MonoBehaviour
         UpdatePlacedStrapAndTwin();
     }
 
-    private void BuildRemoveButton(Transform parent, float halfW)
+    private void BuildRemoveButton(Transform parent)
     {
         var removeBtn = GameObject.CreatePrimitive(PrimitiveType.Cube);
         removeBtn.name = "RemoveStrapButton";
         removeBtn.transform.SetParent(parent, false);
-        removeBtn.transform.localPosition = new Vector3(halfW + 0.025f, 0.02f, 0.045f);
+        removeBtn.transform.localPosition = new Vector3(0.025f, 0.02f, 0.045f);
         removeBtn.transform.localScale = new Vector3(0.025f, 0.025f, 0.025f);
         removeBtn.GetComponent<Renderer>().material.color = new Color(0.85f, 0.15f, 0.15f);
 
@@ -225,11 +318,11 @@ public class MiniStrapRoll : MonoBehaviour
         Destroy(gameObject);
     }
 
-    private void BuildVisualCrank(Transform parent, float halfW)
+    private void BuildVisualCrank(Transform parent)
     {
         var crankBase = new GameObject("RatchetCrank");
         crankBase.transform.SetParent(parent, false);
-        crankBase.transform.localPosition = new Vector3(halfW + 0.025f, 0.02f, 0f);
+        crankBase.transform.localPosition = new Vector3(0.025f, 0.02f, 0f);
         crankBase.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
 
         var pivotGo = new GameObject("CrankPivot");
@@ -282,11 +375,9 @@ public class MiniStrapRoll : MonoBehaviour
     {
         if (crankHand == null || crankPivot == null) return;
 
-        // 0° = straight UP, 75° = pulled DOWN toward the player
         float angle = Mathf.Clamp(GetCrankHandAngle(), 0f, 75f);
         crankPivot.localRotation = Quaternion.Euler(0f, 0f, angle);
 
-        // Pulling the crank DOWN (angle increasing) tightens the ratchet
         float delta = angle - prevHandAngle;
         if (delta > 0f && currentPretensionN < maxPretensionN)
         {
@@ -307,8 +398,6 @@ public class MiniStrapRoll : MonoBehaviour
 
     private float GetCrankHandAngle()
     {
-        // Local +Y is UP, local -X is OUTWARD toward the player.
-        // Atan2(-localHand.x, localHand.y) = 0° when hand is UP, and increases positively as hand moves DOWN.
         Vector3 localHand = crankPivot.parent.InverseTransformPoint(crankHand.transform.position);
         return Mathf.Atan2(-localHand.x, localHand.y) * Mathf.Rad2Deg;
     }
@@ -335,16 +424,15 @@ public class MiniStrapRoll : MonoBehaviour
     private void UpdatePlacedStrapAndTwin()
     {
         Transform miniBed = BedFrame.Mini.transform;
-        float miniHalfW = BedFrame.Mini.HalfWidth;
         float slackSag = Mathf.Lerp(0.012f, 0f, currentPretensionN / maxPretensionN);
 
-        List<Vector3> miniPts = ComputeContourPoints(miniBed, miniHalfW, bedLocalZ, 1f, true);
+        List<Vector3> miniPts = ComputeContourPoints(miniBed, localStartAnchor, localEndAnchor, 1f, true);
         ApplyPointsToLine(miniLine, miniPts, slackSag);
 
         if (twinLine != null && TruckFrame.Instance != null)
         {
             Transform fullTruck = TruckFrame.Instance.transform;
-            float scaleRatio = TruckFrame.Instance.HalfWidth / miniHalfW;
+            float scaleRatio = TruckFrame.Instance.HalfWidth / BedFrame.Mini.HalfWidth;
 
             twinLine.positionCount = miniLine.positionCount;
             for (int i = 0; i < miniLine.positionCount; i++)
@@ -355,12 +443,16 @@ public class MiniStrapRoll : MonoBehaviour
         }
     }
 
-    private List<Vector3> ComputeContourPoints(Transform bed, float halfW, float localZ, float scale, bool recordCargo)
+    private List<Vector3> ComputeContourPoints(Transform bed, Vector3 lStart, Vector3 lEnd, float scale, bool recordCargo)
     {
         if (recordCargo) securedCargo.Clear();
 
-        Vector3 leftAnchor = bed.TransformPoint(new Vector3(-halfW, 0.005f, localZ));
-        Vector3 rightAnchor = bed.TransformPoint(new Vector3(halfW, 0.005f, localZ));
+        Vector3 startAnchor = bed.TransformPoint(lStart);
+        Vector3 endAnchor = bed.TransformPoint(lEnd);
+
+        Vector3 beltDir = (endAnchor - startAnchor);
+        beltDir.y = 0f;
+        beltDir.Normalize();
 
         List<Vector3> cargoHits = new List<Vector3>();
         int cargoMask = LayerMask.GetMask("Cargo");
@@ -368,8 +460,8 @@ public class MiniStrapRoll : MonoBehaviour
         for (int i = 1; i < raySamples; i++)
         {
             float t = (float)i / raySamples;
-            float localX = Mathf.Lerp(-halfW, halfW, t);
-            Vector3 rayTop = bed.TransformPoint(new Vector3(localX, 1.2f * scale, localZ));
+            Vector3 basePt = Vector3.Lerp(startAnchor, endAnchor, t);
+            Vector3 rayTop = basePt + bed.up * (1.2f * scale);
 
             if (Physics.Raycast(rayTop, -bed.up, out RaycastHit hit, 1.2f * scale, cargoMask, QueryTriggerInteraction.Ignore))
             {
@@ -384,34 +476,40 @@ public class MiniStrapRoll : MonoBehaviour
             }
         }
 
-        // Push the outer cargo edge points slightly outward along X so the strap clears vertical box walls cleanly
         if (cargoHits.Count > 0)
         {
-            cargoHits[0] -= bed.right * (sideClearance * scale);
-            cargoHits[cargoHits.Count - 1] += bed.right * (sideClearance * scale);
+            cargoHits[0] -= beltDir * (sideClearance * scale);
+            cargoHits[cargoHits.Count - 1] += beltDir * (sideClearance * scale);
         }
 
-        List<Vector3> rawPts = new List<Vector3> { leftAnchor };
+        List<Vector3> rawPts = new List<Vector3> { startAnchor };
         rawPts.AddRange(cargoHits);
-        rawPts.Add(rightAnchor);
+        rawPts.Add(endAnchor);
 
-        return MakeUpperConvexHull(rawPts, bed);
+        return MakeUpperConvexHull(rawPts, bed, startAnchor, beltDir);
     }
 
-    private List<Vector3> MakeUpperConvexHull(List<Vector3> pts, Transform bed)
+    private List<Vector3> MakeUpperConvexHull(List<Vector3> pts, Transform bed, Vector3 origin, Vector3 horizDir)
     {
         if (pts.Count <= 2) return pts;
 
         List<Vector3> hull = new List<Vector3>();
         foreach (var p in pts)
         {
-            Vector3 lp = bed.InverseTransformPoint(p);
+            float xCur = Vector3.Dot(p - origin, horizDir);
+            float yCur = bed.InverseTransformPoint(p).y;
+
             while (hull.Count >= 2)
             {
-                Vector3 l1 = bed.InverseTransformPoint(hull[hull.Count - 1]);
-                Vector3 l2 = bed.InverseTransformPoint(hull[hull.Count - 2]);
+                Vector3 p1 = hull[hull.Count - 1];
+                Vector3 p2 = hull[hull.Count - 2];
 
-                float cross = (l1.x - l2.x) * (lp.y - l2.y) - (l1.y - l2.y) * (lp.x - l2.x);
+                float x1 = Vector3.Dot(p1 - origin, horizDir);
+                float y1 = bed.InverseTransformPoint(p1).y;
+                float x2 = Vector3.Dot(p2 - origin, horizDir);
+                float y2 = bed.InverseTransformPoint(p2).y;
+
+                float cross = (x1 - x2) * (yCur - y2) - (y1 - y2) * (xCur - x2);
                 if (cross >= 0.00001f) hull.RemoveAt(hull.Count - 1);
                 else break;
             }

@@ -5,13 +5,18 @@ public class StrapSpawner : MonoBehaviour
 {
     public GameObject strapRollPrefab;
     public Transform supplyTable;
-    public Vector3 tableOffset = new Vector3(-0.35f, 0.04f, 0f); // Spot on SupplyTable
+    public Vector3 tableOffset = new Vector3(-0.35f, 0.04f, 0f);
 
     private MiniStrapRoll currentTableRoll;
     private readonly List<MiniStrapRoll> allStraps = new List<MiniStrapRoll>();
 
     void Start()
     {
+        if (supplyTable == null)
+        {
+            var found = GameObject.Find("SupplyTable");
+            if (found != null) supplyTable = found.transform;
+        }
         SpawnFreshRoll();
     }
 
@@ -25,11 +30,13 @@ public class StrapSpawner : MonoBehaviour
 
         var go = Instantiate(strapRollPrefab, spawnPos, Quaternion.Euler(0f, yaw, 0f), transform);
         currentTableRoll = go.GetComponent<MiniStrapRoll>();
-        currentTableRoll.spawner = this;
-        allStraps.Add(currentTableRoll);
+        if (currentTableRoll != null)
+        {
+            currentTableRoll.spawner = this;
+            allStraps.Add(currentTableRoll);
+        }
     }
 
-    // Called automatically by MiniStrapRoll the moment you pick it up from the table
     public void NotifyRollTaken(MiniStrapRoll takenRoll)
     {
         if (takenRoll == currentTableRoll)
@@ -39,7 +46,6 @@ public class StrapSpawner : MonoBehaviour
         }
     }
 
-    // Called by ResetButton to wipe all placed straps off MiniBed and TruckBed_Full
     public void ResetAllStraps()
     {
         foreach (var s in allStraps)
@@ -47,6 +53,13 @@ public class StrapSpawner : MonoBehaviour
             if (s != null) Destroy(s.gameObject);
         }
         allStraps.Clear();
+
+        // Catch any stray rolls in the scene
+        foreach (var stray in FindObjectsByType<MiniStrapRoll>(FindObjectsSortMode.None))
+        {
+            if (stray != null) Destroy(stray.gameObject);
+        }
+
         currentTableRoll = null;
         SpawnFreshRoll();
     }
